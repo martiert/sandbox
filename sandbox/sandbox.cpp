@@ -1,3 +1,5 @@
+#include <seccomp.h>
+
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -112,42 +114,27 @@ void set_new_root(fs::path const & rootfs)
 
 void enable_seccomp()
 {
-    sock_filter filter[] = {
-        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
-                (offsetof(struct seccomp_data, arch))),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,
-                AUDIT_ARCH_X86_64, 0, 17),
+    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_KILL);
 
-        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
-                (offsetof(struct seccomp_data, nr))),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_write, 16, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getpid, 15, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_geteuid, 14, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getegid, 13, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_openat, 12, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_newfstatat, 11, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getdents64, 10, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_close, 9, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_capget, 8, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_socket, 7, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_bind, 6, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getsockname, 5, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_sendto, 4, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_recvmsg, 3, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_brk, 2, 0),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_exit_group, 1, 0),
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getpid), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(geteuid), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getegid), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(openat), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(newfstatat), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getdents64), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(close), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(capget), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(bind), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(getsockname), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(sendto), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(recvmsg), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(brk), 0);
+    seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit_group), 0);
 
-        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_KILL),
-        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
-    };
-    sock_fprog prog = {
-      .len = std::size(filter),
-      .filter = filter,
-    };
-    prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-    syscall(SYS_seccomp,
-            SECCOMP_SET_MODE_FILTER,
-            0, &prog);
+    seccomp_load(ctx);
+    seccomp_release(ctx);
 }
 
 int my_main(int argc, char ** argv, char ** argenv)
