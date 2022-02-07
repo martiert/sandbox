@@ -125,6 +125,8 @@ int my_main(int argc, char ** argv, char ** argenv)
 
     pid_t child = fork();
     if (child == 0) {
+        unshare(CLONE_NEWNET);
+
         set_new_root(rootfs);
         int result = actual_main(argc, argv, argenv);
         _exit(result);
