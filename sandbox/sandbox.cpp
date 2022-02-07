@@ -3,12 +3,17 @@
 #include <filesystem>
 
 #include <unistd.h>
+#include <string.h>
 #include <dlfcn.h>
 
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
-#include <string.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <linux/audit.h>
+
 
 namespace fs = std::filesystem;
 
@@ -105,6 +110,46 @@ void set_new_root(fs::path const & rootfs)
     fs::remove("/oldroot");
 }
 
+void enable_seccomp()
+{
+    sock_filter filter[] = {
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+                (offsetof(struct seccomp_data, arch))),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,
+                AUDIT_ARCH_X86_64, 0, 17),
+
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+                (offsetof(struct seccomp_data, nr))),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_write, 16, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getpid, 15, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_geteuid, 14, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getegid, 13, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_openat, 12, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_newfstatat, 11, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getdents64, 10, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_close, 9, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_capget, 8, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_socket, 7, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_bind, 6, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_getsockname, 5, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_sendto, 4, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_recvmsg, 3, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_brk, 2, 0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, SYS_exit_group, 1, 0),
+
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_KILL),
+        BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+    };
+    sock_fprog prog = {
+      .len = std::size(filter),
+      .filter = filter,
+    };
+    prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+    syscall(SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            0, &prog);
+}
+
 int my_main(int argc, char ** argv, char ** argenv)
 {
     std::cout << "!!!!!! Running sandboxed !!!!!!" << std::endl;
@@ -128,6 +173,8 @@ int my_main(int argc, char ** argv, char ** argenv)
         unshare(CLONE_NEWNET);
 
         set_new_root(rootfs);
+        enable_seccomp();
+
         int result = actual_main(argc, argv, argenv);
         _exit(result);
     }
