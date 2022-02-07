@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <sys/mount.h>
 #include <string.h>
 
@@ -77,6 +78,19 @@ int pivot_root(char const * new_root, char const * put_old)
     return syscall(SYS_pivot_root, new_root, put_old);
 }
 
+void create_procfs()
+{
+    if (!fs::create_directories("/proc")) {
+        std::cerr << "Failed create /proc directory: " << strerror(errno) << std::endl;
+        _exit(1);
+    }
+
+    if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
+        std::cerr << "Failed mounting /proc: " << strerror(errno) << std::endl;
+        _exit(1);
+    }
+}
+
 void set_new_root(fs::path const & rootfs)
 {
     auto old_root = rootfs / "oldroot";
@@ -85,6 +99,7 @@ void set_new_root(fs::path const & rootfs)
 
     auto value = chdir("/");
     (void) value;
+    create_procfs();
     if (umount2("/oldroot", MNT_DETACH) != 0)
         std::cerr << "Failed umounting oldroot: " << strerror(errno) << std::endl;
     fs::remove("/oldroot");
@@ -96,7 +111,7 @@ int my_main(int argc, char ** argv, char ** argenv)
     uid_t uid = geteuid();
     uid_t gid = getegid();
 
-    unshare(CLONE_NEWUSER | CLONE_NEWNS);
+    unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID);
     do_not_inherit_from_root();
 
     setgroups_deny();
@@ -108,8 +123,16 @@ int my_main(int argc, char ** argv, char ** argenv)
     bind_mount(rootfs, "run");
     bind_mount(rootfs, "sys");
 
-    set_new_root(rootfs);
-    return actual_main(argc, argv, argenv);
+    pid_t child = fork();
+    if (child == 0) {
+        set_new_root(rootfs);
+        int result = actual_main(argc, argv, argenv);
+        _exit(result);
+    }
+
+    int status = -1;
+    waitpid(child, &status, 0);
+    return status;
 }
 
 }
